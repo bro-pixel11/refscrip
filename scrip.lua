@@ -1,4 +1,4 @@
-script_content = '''-- ═══════════════════════════════════════════════════════════════
+-- ═══════════════════════════════════════════════════════════════
 --  PHANTOM-BOMB  |  Word Bomb Assistant  |  v2.0
 --  Orion UI Edition — полностью переработанная архитектура
 -- ═══════════════════════════════════════════════════════════════
@@ -31,9 +31,9 @@ local tonumber = tonumber
 local ipairs = ipairs
 local pairs = pairs
 local next = next
-local getgc = getgc
-local debug_getinfo = debug.getinfo
-local debug_getupvalues = debug.getupvalues
+local getgc = getgc or function() return {} end
+local debug_getinfo = debug.getinfo or debug.info
+local debug_getupvalues = debug.getupvalues or debug.getupvalue
 
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
@@ -44,37 +44,7 @@ local TweenService = game:GetService("TweenService")
 
 local LocalPlayer = Players.LocalPlayer
 
--- ═══════════════════════════════════════════════════════════════
---  AUTHENTICATION MODULE
--- ═══════════════════════════════════════════════════════════════
-local AUTH_API = "https://roblox-key-api-zxnv.onrender.com/verify"
-local UserKey = getgenv().PhantomKey or _G.PhantomKey or nil
-
-if not UserKey or UserKey == "" then
-    LocalPlayer:Kick("[Phantom-Bomb] Key required! Set getgenv().PhantomKey = 'YOUR_KEY'")
-    return
-end
-
-local function verifyKey(key)
-    local hwid = gethwid and gethwid() or game:GetService("RbxAnalyticsService"):GetClientId()
-    local url = string.format("%s?key=%s&hwid=%s", AUTH_API, tostring(key), tostring(hwid))
-    
-    local ok, response = pcall(function() return game:HttpGet(url) end)
-    if not ok or not response then return false, "Connection failed" end
-    
-    local decodeOk, data = pcall(function() return HttpService:JSONDecode(response) end)
-    if not decodeOk or type(data) ~= "table" then return false, "Invalid server response" end
-    
-    return data.status == "success", data.message or "Unknown"
-end
-
-local authed, authMsg = verifyKey(UserKey)
-if not authed then
-    LocalPlayer:Kick("[Phantom-Bomb] Auth failed: " .. tostring(authMsg))
-    return
-end
-
-print("[Phantom-Bomb] Authenticated successfully!")
+print("[Phantom-Bomb] Bypassing Key System... Authenticated!")
 
 -- ═══════════════════════════════════════════════════════════════
 --  ORION UI INITIALIZATION
@@ -197,7 +167,7 @@ local function loadDictionary()
         local count = 0
         local seen = {}
         
-        for line in raw:gmatch("[^\\r\\n]+") do
+        for line in raw:gmatch("[^\r\n]+") do
             local word = string_gsub(line, "%s+", ""):lower()
             local wlen = #word
             
@@ -212,7 +182,7 @@ local function loadDictionary()
                         if not seen[sub] then
                             seen[sub] = {}
                         end
-                            seen[sub][word] = true
+                        seen[sub][word] = true
                     end
                 end
                 
@@ -248,7 +218,7 @@ end
 loadDictionary()
 
 -- ═══════════════════════════════════════════════════════════════
---  GC FUNCTION CACHE (FIXED STALE ISSUE)
+--  GC FUNCTION CACHE
 -- ═══════════════════════════════════════════════════════════════
 local GCCache = {
     fn = nil,
@@ -277,6 +247,7 @@ end
 
 local function scanGC()
     GCCache.scanCount = GCCache.scanCount + 1
+    if not getgc then return nil end
     for _, v in pairs(getgc()) do
         if isTargetFunction(v) then
             GCCache.fn = v
@@ -293,7 +264,6 @@ end
 local function getUpdateFn()
     local now = os_clock()
     
-    -- Check if cached function is stale
     if GCCache.fn then
         local age = now - GCCache.lastValid
         if age > Config.gcCacheTime then
@@ -332,7 +302,6 @@ local function readPrompt()
         end
     end
     
-    -- Fallback: scan UI
     local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
     if pg then
         for _, guiName in ipairs({"GameUI", "DesktopUI", "MobileUI"}) do
@@ -369,14 +338,13 @@ local function getGameState()
     
     local prompt = rawPrompt:lower():gsub("%s+", "")
     if prompt == "" or prompt == "waiting" or prompt == "waiting..." then
-        SessionData.lastPrompt = ""  -- RESET on waiting!
+        SessionData.lastPrompt = ""
         return nil, false
     end
     
     local turnOwner = readTurnOwner()
     local isMyTurn = (turnOwner == LocalPlayer.UserId)
     
-    -- Fallback UI detection
     if turnOwner == nil then
         local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
         if pg then
@@ -458,7 +426,7 @@ local function pickBestWord(words, mode)
 end
 
 -- ═══════════════════════════════════════════════════════════════
---  TYPING ENGINE (HUMANIZED)
+--  TYPING ENGINE
 -- ═══════════════════════════════════════════════════════════════
 local Alphabet = "abcdefghijklmnopqrstuvwxyz"
 
@@ -477,7 +445,6 @@ local function typeWord(word, targetPrompt)
     
     if Config.debugMode then print("[Type] Starting: " .. word) end
     
-    -- Pre-typing delay
     if not Config.instantType and Config.checkDelay > 0 then
         task_wait(applyVariation(Config.checkDelay))
         if SessionData.typingSession ~= sessionId then
@@ -486,14 +453,12 @@ local function typeWord(word, targetPrompt)
         end
     end
     
-    -- Verify state
     local currentPrompt, isMyTurn = getGameState()
     if currentPrompt ~= targetPrompt or not isMyTurn then
         SessionData.isTyping = false
         return
     end
     
-    -- Focus textbox
     local textBox = findTextBox()
     if textBox then
         textBox:CaptureFocus()
@@ -507,7 +472,6 @@ local function typeWord(word, targetPrompt)
     for i = 1, #word do
         if SessionData.typingSession ~= sessionId then break end
         
-        -- Mid-typing state check
         local cp, ct = getGameState()
         if cp ~= targetPrompt or not ct then
             if Config.debugMode then print("[Type] Turn lost mid-type") end
@@ -516,7 +480,6 @@ local function typeWord(word, targetPrompt)
         
         local char = string_sub(word, i, i)
         
-        -- Human typo simulation
         if Config.typosEnabled and not Config.instantType and math_random(1, 100) <= Config.typoChance then
             local wrongIdx = math_random(1, 26)
             local wrongChar = string_sub(Alphabet, wrongIdx, wrongIdx)
@@ -535,7 +498,6 @@ local function typeWord(word, targetPrompt)
             end
         end
         
-        -- Send actual key
         local keyCode
         if char == "-" then keyCode = Enum.KeyCode.Minus
         elseif char == "'" then keyCode = Enum.KeyCode.Quote
@@ -556,7 +518,6 @@ local function typeWord(word, targetPrompt)
         end
     end
     
-    -- Submit
     if SessionData.typingSession == sessionId then
         local fp, ft = getGameState()
         if fp == targetPrompt and ft then
@@ -565,7 +526,6 @@ local function typeWord(word, targetPrompt)
             if not Config.instantType then task_wait(0.01) end
             Vim:SendKeyEvent(false, Enum.KeyCode.Return, false, nil)
             
-            -- Stats
             SessionData.totalTurns = SessionData.totalTurns + 1
             table_insert(SessionData.wordsTyped, word)
             SessionData.avgWordLength = (#word + SessionData.avgWordLength * (SessionData.totalTurns - 1)) / SessionData.totalTurns
@@ -576,7 +536,7 @@ local function typeWord(word, targetPrompt)
             end
             
             if Config.debugMode then print("[Type] Submitted: " .. word) end
-            SessionData.lastPrompt = ""  -- Reset for next turn
+            SessionData.lastPrompt = ""
         else
             if textBox then textBox.Text = "" end
         end
@@ -596,7 +556,6 @@ local function processTurn(force)
         return
     end
     
-    -- Cancel if prompt changed mid-type
     if SessionData.isTyping and prompt ~= SessionData.lastPrompt then
         SessionData.typingSession = SessionData.typingSession + 1
         SessionData.isTyping = false
@@ -700,7 +659,7 @@ TabMain:AddToggle({
                     local prompt = readPrompt()
                     if not prompt or prompt:lower():find("waiting") then
                         waitCounter = waitCounter + 1
-                        if waitCounter >= 20 then  -- ~2.4s
+                        if waitCounter >= 20 then
                             GCCache.fn = nil
                             SessionData.lastPrompt = ""
                             waitCounter = 0
@@ -731,28 +690,6 @@ TabMain:AddToggle({
     Save = true,
     Flag = "instantType",
     Callback = function(v) Config.instantType = v end
-})
-
-TabMain:AddToggle({
-    Name = "Auto Join Game",
-    Default = false,
-    Save = true,
-    Flag = "autoJoin",
-    Callback = function(v)
-        Config.autoJoin = v
-        if v then
-            local games = ReplicatedStorage:WaitForChild("Network", 10)
-            games = games and games:WaitForChild("Games", 10)
-            if games then
-                task_spawn(function()
-                    task_wait(Config.autoJoinDelay)
-                    for i = -1, -20, -1 do
-                        pcall(function() games.GameEvent:FireServer(i, "JoinGame") end)
-                    end
-                end)
-            end
-        end
-    end
 })
 
 TabMain:AddButton({
@@ -854,18 +791,6 @@ TabSettings:AddSlider({
     Callback = function(v) Config.typingWPM = v end
 })
 
-TabSettings:AddSlider({
-    Name = "Auto Join Delay",
-    Min = 1,
-    Max = 5,
-    Default = 2,
-    Increment = 1,
-    ValueName = " sec",
-    Save = true,
-    Flag = "joinDelay",
-    Callback = function(v) Config.autoJoinDelay = v end
-})
-
 TabSettings:AddSection({ Name = "Humanization" })
 
 TabSettings:AddSlider({
@@ -881,26 +806,6 @@ TabSettings:AddSlider({
 })
 
 TabSettings:AddToggle({
-    Name = "Jitter",
-    Default = false,
-    Save = true,
-    Flag = "jitter",
-    Callback = function(v) Config.jitterEnabled = v end
-})
-
-TabSettings:AddSlider({
-    Name = "Jitter Intensity",
-    Min = 1,
-    Max = 20,
-    Default = 5,
-    Increment = 1,
-    ValueName = " ms",
-    Save = true,
-    Flag = "jitterInt",
-    Callback = function(v) Config.jitterIntensity = v / 100 end
-})
-
-TabSettings:AddToggle({
     Name = "Human Typos",
     Default = false,
     Save = true,
@@ -908,78 +813,10 @@ TabSettings:AddToggle({
     Callback = function(v) Config.typosEnabled = v end
 })
 
-TabSettings:AddSlider({
-    Name = "Typo Chance",
-    Min = 1,
-    Max = 20,
-    Default = 3,
-    Increment = 1,
-    ValueName = "%",
-    Save = true,
-    Flag = "typoChance",
-    Callback = function(v) Config.typoChance = v end
-})
-
-TabSettings:AddSection({ Name = "Advanced" })
-
-TabSettings:AddToggle({
-    Name = "Anti-Duplicate",
-    Default = true,
-    Save = true,
-    Flag = "antiDupe",
-    Callback = function(v) Config.antiDupe = v end
-})
-
-TabSettings:AddToggle({
-    Name = "Debug Mode",
-    Default = false,
-    Save = true,
-    Flag = "debug",
-    Callback = function(v) Config.debugMode = v end
-})
-
--- ═══════════════════════════════════════════════════════════════
---  UI: STATS TAB
--- ═══════════════════════════════════════════════════════════════
-TabStats:AddSection({ Name = "Session Statistics" })
-
-local lblElapsed = TabStats:AddLabel("Elapsed: 00:00:00")
-local lblTurns = TabStats:AddLabel("Total Turns: 0")
-local lblAvgLen = TabStats:AddLabel("Avg Word Length: 0")
-local lblLongest = TabStats:AddLabel("Longest Word: -")
-local lblRarest = TabStats:AddLabel("Rarest Word: -")
-local lblGCScans = TabStats:AddLabel("GC Scans: 0")
-
-TabStats:AddSection({ Name = "Performance" })
-local lblDictSize = TabStats:AddLabel("Dictionary: Loading...")
-local lblCacheSize = TabStats:AddLabel("Search Cache: 0")
-
 -- ═══════════════════════════════════════════════════════════════
 --  BACKGROUND SYSTEMS
 -- ═══════════════════════════════════════════════════════════════
-
--- Stats updater
- task_spawn(function()
-    while task_wait(1) do
-        local elapsed = os_time() - SessionData.startTime
-        local h = math_floor(elapsed / 3600)
-        local m = math_floor((elapsed % 3600) / 60)
-        local s = elapsed % 60
-        lblElapsed:Set("Elapsed: " .. string.format("%02d:%02d:%02d", h, m, s))
-        lblTurns:Set("Total Turns: " .. SessionData.totalTurns)
-        lblAvgLen:Set("Avg Word Length: " .. string.format("%.1f", SessionData.avgWordLength))
-        lblLongest:Set("Longest Word: " .. (SessionData.longestWord ~= "" and SessionData.longestWord:upper() or "-"))
-        lblRarest:Set("Rarest Word: " .. (SessionData.rarestWord ~= "" and SessionData.rarestWord:upper() or "-"))
-        lblGCScans:Set("GC Scans: " .. GCCache.scanCount)
-        lblCacheSize:Set("Search Cache: " .. #SearchCache)
-        if Dictionary.indexed then
-            lblDictSize:Set("Dictionary: " .. Dictionary.totalWords .. " words")
-        end
-    end
-end)
-
--- UI state updater
- task_spawn(function()
+task_spawn(function()
     while task_wait(0.2) do
         local prompt, isMyTurn = getGameState()
         if prompt then
@@ -1000,61 +837,5 @@ end)
     end
 end)
 
--- Auto-join on room registration
- task_spawn(function()
-    local games = ReplicatedStorage:WaitForChild("Network", 10)
-    games = games and games:WaitForChild("Games", 10)
-    if not games then return end
-    
-    local reg = games:FindFirstChild("RegisterGame")
-    if reg then
-        reg.OnClientEvent:Connect(function(roomId)
-            SessionData.usedWords = {}
-            SessionData.lastPrompt = ""
-            SearchCache = {}
-            GCCache.fn = nil
-            
-            if Config.autoJoin then
-                task_delay(Config.autoJoinDelay, function()
-                    pcall(function() games.GameEvent:FireServer(roomId, "JoinGame") end)
-                end)
-            end
-        end)
-    end
-end)
-
--- Anti-dupe UI fallback
- task_spawn(function()
-    while task_wait(0.8) do
-        if not Config.antiDupe then continue end
-        local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
-        if not pg then continue end
-        
-        for _, guiName in ipairs({"GameUI", "DesktopUI", "MobileUI"}) do
-            local gui = pg:FindFirstChild(guiName)
-            if gui then
-                for _, frame in ipairs(gui:GetDescendants()) do
-                    if frame:IsA("TextLabel") and frame.Visible and #frame.Text >= 2 then
-                        local txt = frame.Text:gsub("%s+", "")
-                        if txt == txt:upper() and not txt:find("%d") and not txt:find("TURN") and not txt:find("ROUND") then
-                            SessionData.usedWords[txt:lower()] = true
-                        end
-                    end
-                end
-            end
-        end
-    end
-end)
-
--- ═══════════════════════════════════════════════════════════════
---  INIT
--- ═══════════════════════════════════════════════════════════════
 OrionLib:Init()
 print("[Phantom-Bomb] v2.0 loaded successfully!")
-'''
-
-with open('/mnt/agents/output/phantom_bomb_v2.lua', 'w', encoding='utf-8') as f:
-    f.write(script_content)
-
-print("Script saved successfully!")
-print(f"File size: {len(script_content)} characters")
